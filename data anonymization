@@ -1,0 +1,78 @@
+ DP Practical: Anonymization, k-anonymity and Differential Privacy
+# Fictional classroom dataset only.
+import pandas as pd
+import random, math
+
+data = {
+ "Name":["Asha","Riya","Kabir","Arjun","Meera","Nisha","Dev","Ishaan","Sara"],
+ "Age":[21,24,32,35,42,45,56,27,29],
+ "ZIP":["110011","110019","120004","120008","110025","110030","130001","110040","110045"],
+ "Gender":["F","F","M","M","F","F","X","M","M"],
+ "Disease":["Asthma","Diabetes","Flu","Asthma","Diabetes","Flu","Hypertension","Asthma","Diabetes"],
+ "Salary":[35000,42000,50000,52000,60000,62000,70000,39000,41000]
+}
+df=pd.DataFrame(data)
+print("\nORIGINAL DATA\n",df.to_string(index=False))
+
+# 1. MASKING: partially hide postal code
+masked=df.copy()
+masked["ZIP"]=masked["ZIP"].str[:3]+"XXX"
+print("\n1. MASKING\n",masked[["Name","ZIP"]].to_string(index=False))
+
+# 2. GENERALIZATION: exact age -> decade; ZIP -> broad prefix/region
+gen=df.copy()
+gen["Age_Group"]=(gen["Age"]//10*10).astype(str)+"-"+(gen["Age"]//10*10+9).astype(str)
+gen["Region"]=gen["ZIP"].str[:3]
+gen=gen.drop(columns=["Age","ZIP"])
+print("\n2. GENERALIZATION\n",gen[["Name","Age_Group","Region","Gender"]].to_string(index=False))
+
+# 3. SUPPRESSION: remove rare QI combinations occurring fewer than k times
+k=2
+qi=["Age_Group","Region","Gender"]
+sizes=gen.groupby(qi)["Name"].transform("count")
+kept=gen[sizes>=k].copy()
+removed=gen[sizes<k].copy()
+print("\n3. SUPPRESSION (k=2)")
+print("Retained records:\n",kept[["Name"]+qi].to_string(index=False))
+print("Suppressed records:",len(removed), removed["Name"].tolist())
+
+# 4. AGGREGATION: publish group-level summaries
+agg=df.assign(
+ Age_Group=(df.Age//10*10).astype(str)+"-"+(df.Age//10*10+9).astype(str),
+ Region=df.ZIP.str[:3]
+).groupby(["Age_Group","Region"]).agg(
+ Number_of_People=("Name","count"), Average_Salary=("Salary","mean")
+).reset_index()
+print("\n4. AGGREGATION\n",agg.to_string(index=False))
+
+# 5. RE-IDENTIFICATION TEST: compare exact and generalized QIs
+exact=["Age","ZIP","Gender"]
+exact_sizes=df.groupby(exact)["Name"].transform("count")
+print("\n5. RE-IDENTIFICATION TEST")
+print("Unique exact QI combinations:",int((exact_sizes==1).sum()),"out of",len(df))
+gen_sizes=gen.groupby(qi)["Name"].transform("count")
+gen["Equivalence_Class_Size"]=gen_sizes
+print(gen[["Name"]+qi+["Equivalence_Class_Size"]].to_string(index=False))
+minimum_k=int(gen_sizes.min())
+print("Minimum equivalence class size:",minimum_k)
+print("k=2 satisfied:",minimum_k>=k)
+
+# 6. DIFFERENTIAL PRIVACY: Laplace noise on a count query
+def laplace_noise(scale):
+    u=random.random()-0.5
+    if u==0: return 0.0
+    return -scale*(1 if u>0 else -1)*math.log(1-2*abs(u))
+
+epsilon=1.0
+true_count=len(df)
+released=max(0,round(true_count+laplace_noise(1/epsilon)))
+print("\n6. DIFFERENTIAL PRIVACY DEMO")
+print("Epsilon:",epsilon)
+print("True count (kept internal in a real release):",true_count)
+print("Noisy released count:",released)
+print("The noisy count can change on each run.")
+
+print("\nCONCLUSION: Masking hides parts of values; generalization makes values broader;")
+print("suppression removes rare records; aggregation publishes group summaries.")
+print("k-anonymity checks equivalence-class sizes. Differential privacy adds calibrated")
+print("random noise to limit what an output reveals about any one individual.")
